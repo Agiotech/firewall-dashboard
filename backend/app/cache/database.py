@@ -1,3 +1,5 @@
+import re
+
 import aiosqlite
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -205,6 +207,16 @@ CREATE TABLE IF NOT EXISTS hardware_metrics (
 );
 
 CREATE INDEX IF NOT EXISTS idx_hardware_ts ON hardware_metrics(ts);
+
+CREATE TABLE IF NOT EXISTS hub_sync_state (
+    entity                TEXT PRIMARY KEY,
+    last_ts               INTEGER NOT NULL DEFAULT 0,
+    last_id               INTEGER NOT NULL DEFAULT 0,
+    last_attempt_ts       INTEGER,
+    last_success_ts       INTEGER,
+    consecutive_failures  INTEGER NOT NULL DEFAULT 0,
+    last_error            TEXT
+);
 """
 
 
@@ -497,6 +509,94 @@ async def insert_quality(ts: int, target: str, latency_ms: float, jitter_ms: flo
             (ts, target, latency_ms, jitter_ms, loss_pct),
         )
         await db.commit()
+
+
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _safe_identifier(name: str) -> str:
+    # table/column names come from the static catalog in app/hub/entities.py,
+    # never from the API; this guard keeps the f-string SQL below honest.
+    if not _IDENTIFIER_RE.match(name):
+        raise ValueError(f"Invalid SQL identifier: {name!r}")
+    return name
+
+
+async def get_sync_watermark(entity: str) -> dict:
+    """Return the sync cursor for an entity, creating the default row if missing."""
+    async with get_db() as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO hub_sync_state(entity) VALUES (?)", (entity,)
+        )
+        await db.commit()
+        cur = await db.execute(
+            "SELECT entity, last_ts, last_id, last_attempt_ts, last_success_ts, "
+            "consecutive_failures, last_error FROM hub_sync_state WHERE entity = ?",
+            (entity,),
+        )
+        row = await cur.fetchone()
+        return dict(row)
+
+
+async def set_sync_watermark(
+    entity: str, ok: bool, now_ts: int,
+    last_ts: int | None = None, last_id: int | None = None,
+    error: str | None = None,
+) -> None:
+    """Record a sync attempt. The cursor (last_ts/last_id) only moves when ok=True."""
+    async with get_db() as db:
+        if ok:
+            await db.execute(
+                """
+                INSERT INTO hub_sync_state(entity, last_ts, last_id, last_attempt_ts,
+                                           last_success_ts, consecutive_failures, last_error)
+                VALUES (?,?,?,?,?,0,NULL)
+                ON CONFLICT(entity) DO UPDATE SET
+                    last_ts = COALESCE(excluded.last_ts, last_ts),
+                    last_id = COALESCE(excluded.last_id, last_id),
+                    last_attempt_ts = excluded.last_attempt_ts,
+                    last_success_ts = excluded.last_success_ts,
+                    consecutive_failures = 0,
+                    last_error = NULL
+                """,
+                (entity, last_ts or 0, last_id or 0, now_ts, now_ts),
+            )
+        else:
+            await db.execute(
+                """
+                INSERT INTO hub_sync_state(entity, last_attempt_ts,
+                                           consecutive_failures, last_error)
+                VALUES (?,?,1,?)
+                ON CONFLICT(entity) DO UPDATE SET
+                    last_attempt_ts = excluded.last_attempt_ts,
+                    consecutive_failures = consecutive_failures + 1,
+                    last_error = excluded.last_error
+                """,
+                (entity, now_ts, error),
+            )
+        await db.commit()
+
+
+async def read_rows_since(
+    table: str, cursor_column: str, last_ts: int, last_id: int, limit: int,
+) -> list[dict]:
+    """Read rows past the (cursor_value, rowid) watermark, oldest first.
+
+    The rowid tiebreaker makes ts-cursors safe when many rows share one timestamp
+    (e.g. wan_metrics has one row per WAN per poll). Each returned row includes
+    `_rowid` so the caller can persist the new watermark.
+    """
+    t = _safe_identifier(table)
+    c = _safe_identifier(cursor_column)
+    async with get_db() as db:
+        cur = await db.execute(
+            f"SELECT rowid AS _rowid, * FROM {t} "
+            f"WHERE {c} > ? OR ({c} = ? AND rowid > ?) "
+            f"ORDER BY {c}, rowid LIMIT ?",
+            (last_ts, last_ts, last_id, limit),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
 
 
 async def purge_old(now_ts: int) -> None:
