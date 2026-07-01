@@ -206,25 +206,25 @@ Sigue el patrón ya establecido en [CLAUDE.md](../../CLAUDE.md) §7 para el poll
 
 ## Plan de implementación (incrementos, 1 a la vez per `sdd`)
 
-1. `hub_sync_state` + `get_sync_watermark`/`set_sync_watermark`/`read_rows_since` genéricos en `cache/database.py`.
-2. `app/hub/entities.py` — catálogo de las 6 entidades de fase 1.
-3. `app/hub/client.py` — `HubClient` async: `push(entity, rows)`, manejo de 401/413/5xx/timeout.
-4. `app/hub/sync.py` — orquestador: itera entidades, lee desde watermark, respeta `HUB_SYNC_BATCH_SIZE`, aplica backoff.
-5. `scheduler/jobs.py` — `_job_hub_sync`, registrado solo si `HUB_SYNC_ENABLED=true`.
-6. `cache/database.py` `purge_old()` — chequeo de "no purgar sin confirmar" + evento de advertencia (§2e).
-7. Registrar `HUB_*` en `.env.example`, `app/config.py`, [`docs/CONFIG.md`](../CONFIG.md).
-8. (Repo aparte, `2026_Agio-Hub`) permiso IAM + router de ingestión + seed script — ver §2c.
-9. Smoke test manual: bootstrap/token OK, push real de un lote, verificar en Hub, verificar que `HUB_SYNC_ENABLED=false` no cambia nada del comportamiento actual.
+1. [x] `hub_sync_state` + `get_sync_watermark`/`set_sync_watermark`/`read_rows_since` genéricos en `cache/database.py`. — PR #2
+2. [x] `app/hub/entities.py` — catálogo de las 6 entidades de fase 1. — PR #2
+3. [x] `app/hub/client.py` — `HubClient` async: `push(entity, rows)`, manejo de 401/413/5xx/timeout. — PR #3
+4. [x] `app/hub/sync.py` — orquestador: itera entidades, lee desde watermark, respeta `HUB_SYNC_BATCH_SIZE`, aplica backoff. — PR #5
+5. [x] `scheduler/jobs.py` — `_job_hub_sync`, registrado solo si `HUB_SYNC_ENABLED=true`. — PR #6
+6. [x] `cache/database.py` `purge_old()` — chequeo de "no purgar sin confirmar" + evento de advertencia (§2e). — PR #6
+7. [x] Registrar `HUB_*` en `.env.example`, `app/config.py`, [`docs/CONFIG.md`](../CONFIG.md). — absorbido en el inc 5 (PR #6), la regla de CLAUDE.md §2 no permite separarlos
+8. [ ] (Repo aparte, `2026_Agio-Hub`) permiso IAM + router de ingestión + seed script — ver §2c. **Bloqueado: requiere el repo del Hub.**
+9. [ ] Smoke test manual: bootstrap/token OK, push real de un lote, verificar en Hub. **Bloqueado por el inc 8.** La mitad local (cero regresión con `HUB_SYNC_ENABLED=false`) ya la cubre `backend/scripts/test_hub_sync.py`.
 
 ---
 
 ## Checklist de "done"
 
-- [ ] Los 7 escenarios BDD de §Fase 1 tienen verificación manual o test con fixtures
-- [ ] `HUB_SYNC_ENABLED=false` reproduce el comportamiento actual sin cambios (cero regresión)
-- [ ] Todas las variables nuevas están en `.env.example`, `config.py` y `CONFIG.md`
-- [ ] El endpoint de ingestión existe en Agio-Hub (PR aparte) y su contrato coincide con §2c
-- [ ] El seed script rota/crea el `APP_TOKEN` y nunca lo imprime a stdout
-- [ ] `purge_old()` no borra datos no sincronizados sin antes emitir un evento de advertencia
-- [ ] No se hardcodea `HUB_URL` ni ningún token/secreto en código fuente
-- [ ] Nuevo job documentado en [ARQUITECTURA.md](../ARQUITECTURA.md) §"APScheduler — jobs periódicos"
+- [x] Los 7 escenarios BDD de §Fase 1 tienen verificación manual o test con fixtures — `backend/scripts/test_hub_sync.py` (offline: SQLite temporal + `httpx.MockTransport`)
+- [x] `HUB_SYNC_ENABLED=false` reproduce el comportamiento actual sin cambios (cero regresión) — el job ni se registra; escenario 7 del test
+- [x] Todas las variables nuevas están en `.env.example`, `config.py` y `CONFIG.md`
+- [ ] El endpoint de ingestión existe en Agio-Hub (PR aparte) y su contrato coincide con §2c — **bloqueado (inc 8)**
+- [ ] El seed script rota/crea el `APP_TOKEN` y nunca lo imprime a stdout — **bloqueado (inc 8)**
+- [x] `purge_old()` no borra datos no sincronizados sin antes emitir un evento de advertencia
+- [x] No se hardcodea `HUB_URL` ni ningún token/secreto en código fuente
+- [x] Nuevo job documentado en [ARQUITECTURA.md](../ARQUITECTURA.md) §"APScheduler — jobs periódicos"
