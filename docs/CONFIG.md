@@ -147,6 +147,20 @@ settings.firewall_host   # tipado, validado
 | `ALERT_TELEGRAM_BOT_TOKEN` | str | — | **sí** |
 | `ALERT_TELEGRAM_CHAT_ID` | str | — | no |
 
+### Sincronización con Agio-Hub
+
+Store-and-forward de métricas locales hacia el portal corporativo (spec [agio-hub-middleware.md](specs/agio-hub-middleware.md)). Con `HUB_SYNC_ENABLED=false` el dashboard no contacta al Hub en ningún momento. En `MOCK_MODE=true` tampoco se transmite nada (los datos sintéticos no salen del host).
+
+| Variable | Tipo | Default | Sensible | Descripción |
+|---|---|---|---|---|
+| `HUB_SYNC_ENABLED` | bool | `false` | no | Activa la transmisión a Agio-Hub |
+| `HUB_URL` | str | — | no | Base URL de Agio-Hub (ej. `http://localhost:8000`) |
+| `HUB_APP_TOKEN` | str | — | **sí** | Token de aplicación (`audience=firewall_monitor`), emitido por el seed script del Hub |
+| `HUB_SYNC_INTERVAL_S` | int | `60` | no | Frecuencia del job de sincronización |
+| `HUB_SYNC_BATCH_SIZE` | int | `500` | no | Máximo de filas por request |
+| `HUB_SYNC_TIMEOUT_S` | int | `10` | no | Timeout HTTP por request al Hub |
+| `HUB_SYNC_MAX_BACKOFF_S` | int | `900` | no | Tope del backoff exponencial tras fallos consecutivos |
+
 ---
 
 ## Ejemplo `.env` mínimo para producción

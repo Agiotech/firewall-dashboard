@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     mock_mode: bool = True
     log_level: str = "INFO"
 
+    # Agio-Hub sync (store-and-forward, spec docs/specs/agio-hub-middleware.md)
+    hub_sync_enabled: bool = False
+    hub_url: str = ""
+    hub_app_token: str = ""
+    hub_sync_interval_s: int = 60
+    hub_sync_batch_size: int = 500
+    hub_sync_timeout_s: int = 10
+    hub_sync_max_backoff_s: int = 900
+
     # Alerts — common
     alert_eval_interval_s: int = 60
 

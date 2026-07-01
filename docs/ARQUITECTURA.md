@@ -325,6 +325,7 @@ React Component ──> useFirewallData() ──> api/client.ts ──> GET /api
 | `retention_purge` | 1 día (03:00 local) | Borra datos > retención |
 | `alert_evaluate` | `ALERT_EVAL_INTERVAL_S` (60s) | Evalúa reglas |
 | `geoip_refresh` | 7 días | Refresca DB GeoLite si aplica |
+| `hub_sync` | `HUB_SYNC_INTERVAL_S` (60s), solo si `HUB_SYNC_ENABLED` | Empuja lotes pendientes a Agio-Hub desde el watermark; inactivo en `MOCK_MODE` |
 
 ---
 
