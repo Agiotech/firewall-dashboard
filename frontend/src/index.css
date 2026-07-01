@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-surface-base: #f4fafe;
+  --color-surface-block: #eef4f8;
+  --color-surface-card: #ffffff;
+  --color-surface-hover: #e9eff3;
+  --color-surface-subtle: #e3e9ed;
+
+  --color-primary: #006876;
+  --color-primary-dark: #004d57;
+  --color-primary-container: #00b6cc;
+  --color-primary-fixed: #4bd8ee;
+
+  --color-text-main: #161c1f;
+  --color-text-body: #3c494c;
+  --color-text-secondary: #4d5e85;
+
+  --color-dark-base: #2b3134;
+  --color-dark-card: #1e2528;
+  --color-dark-block: #252c2f;
+  --color-dark-text: #ecf2f6;
+
+  --color-chart-blue: #006876;
+  --color-chart-cyan: #00b6cc;
+  --color-chart-indigo: #4d5e85;
+  --color-chart-aqua: #4bd8ee;
+  --color-chart-teal: #26a69a;
+  --color-chart-amber: #ffa726;
+  --color-chart-red: #ef5350;
+  --color-chart-green: #66bb6a;
+  --color-chart-purple: #ab47bc;
+  --color-chart-orange: #ff7043;
+
+  --font-family-display: "Space Grotesk", sans-serif;
+  --font-family-body: "Inter", sans-serif;
+  --font-family-mono: "JetBrains Mono", monospace;
+
+  --shadow-card: 0 1px 3px rgba(9, 29, 65, 0.06), 0 1px 2px rgba(9, 29, 65, 0.04);
+  --shadow-card-hover: 0 4px 16px rgba(9, 29, 65, 0.12), 0 2px 6px rgba(9, 29, 65, 0.07);
+  --shadow-card-dark: 0 2px 12px rgba(0, 0, 0, 0.25);
+
+  --radius-card: 12px;
+}
+
+html {
+  font-family: "Inter", sans-serif;
+  color: #161c1f;
+  background-color: #f4fafe;
+}
+
+html.dark {
+  color: #ecf2f6;
+  background-color: #2b3134;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0, 182, 204, 0.3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 182, 204, 0.6); }
+
+@keyframes indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
