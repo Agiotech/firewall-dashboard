@@ -4,6 +4,7 @@ import aiosqlite
 from pathlib import Path
 from contextlib import asynccontextmanager
 from ..config import settings
+from ..hub.entities import ENTITIES, SyncEntity
 
 
 SCHEMA = """
@@ -599,16 +600,60 @@ async def read_rows_since(
         return [dict(r) for r in rows]
 
 
+async def _count_unconfirmed(db, entity: SyncEntity, purge_cutoff: int) -> int:
+    """Rows about to be purged (ts < cutoff) that are past the Hub watermark."""
+    t = _safe_identifier(entity.table)
+    c = _safe_identifier(entity.cursor_column)
+    cur = await db.execute(
+        "SELECT last_ts, last_id FROM hub_sync_state WHERE entity = ?", (entity.name,)
+    )
+    row = await cur.fetchone()
+    last_ts, last_id = (row[0], row[1]) if row else (0, 0)
+    cur = await db.execute(
+        f"SELECT COUNT(*) FROM {t} "
+        f"WHERE ts < ? AND ({c} > ? OR ({c} = ? AND rowid > ?))",
+        (purge_cutoff, last_ts, last_ts, last_id),
+    )
+    row = await cur.fetchone()
+    return int(row[0])
+
+
 async def purge_old(now_ts: int) -> None:
     cutoff = now_ts - settings.retention_days * 86400
     cutoff_5m = now_ts - 90 * 86400
+    cutoff_changes = now_ts - 365 * 86400
+    # cortes de purga de las tablas sincronizables (vpn_tunnels no se purga)
+    sync_purge_cutoffs = {
+        "wan_metrics": cutoff,
+        "system_metrics": cutoff,
+        "events": cutoff,
+        "wan_status_changes": cutoff_changes,
+        "internet_quality": cutoff,
+    }
     async with get_db() as db:
+        # aviso antes de perder filas que Agio-Hub aún no confirma (spec §2e);
+        # sin sync activa (o en mock) todo sería "no confirmado" y solo haría ruido
+        warnings: list[tuple[str, int]] = []
+        if settings.hub_sync_enabled and not settings.mock_mode:
+            for entity in ENTITIES:
+                table_cutoff = sync_purge_cutoffs.get(entity.table)
+                if table_cutoff is None:
+                    continue
+                n = await _count_unconfirmed(db, entity, table_cutoff)
+                if n:
+                    warnings.append((entity.name, n))
         await db.execute("DELETE FROM wan_metrics WHERE ts < ?", (cutoff,))
         await db.execute("DELETE FROM system_metrics WHERE ts < ?", (cutoff,))
         await db.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
-        await db.execute("DELETE FROM wan_status_changes WHERE ts < ?", (now_ts - 365 * 86400,))
+        await db.execute("DELETE FROM wan_status_changes WHERE ts < ?", (cutoff_changes,))
         await db.execute("DELETE FROM internet_quality WHERE ts < ?", (cutoff,))
         await db.execute("DELETE FROM wan_metrics_5m WHERE ts < ?", (cutoff_5m,))
         await db.execute("DELETE FROM lan_metrics WHERE ts < ?", (cutoff,))
         await db.execute("DELETE FROM flow_aggregates WHERE ts_bucket < ?", (now_ts - 7 * 86400,))
+        for name, n in warnings:
+            await db.execute(
+                "INSERT INTO events(ts, priority, category, message) VALUES (?,?,?,?)",
+                (now_ts, "warning", "monitor",
+                 f"Se purgaron {n} filas de {name} sin confirmar por Agio-Hub"),
+            )
         await db.commit()
