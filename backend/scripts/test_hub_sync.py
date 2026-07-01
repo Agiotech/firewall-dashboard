@@ -324,6 +324,29 @@ async def escenario_7():
 # Extra — política de errores §2e no cubierta arriba (413 y 4xx de contrato)
 # ==========================================================================
 
+def extra_alias_token():
+    """Contrato v0.2: el seed del Hub escribe APP_TOKEN_FIREWALL_MONITOR_BATCH."""
+    print("\n=== Extra (contrato v0.2): alias del app token ===")
+    import os
+    from app.config import Settings
+    saved = {k: os.environ.pop(k, None)
+             for k in ("HUB_APP_TOKEN", "APP_TOKEN_FIREWALL_MONITOR_BATCH")}
+    try:
+        os.environ["APP_TOKEN_FIREWALL_MONITOR_BATCH"] = "tok-seed"
+        s = Settings(_env_file=None)
+        check(s.hub_app_token == "tok-seed",
+              "el nombre que escribe el seed del Hub se lee sin adaptacion")
+        os.environ["HUB_APP_TOKEN"] = "tok-manual"
+        s = Settings(_env_file=None)
+        check(s.hub_app_token == "tok-manual",
+              "HUB_APP_TOKEN gana como override manual si ambos existen")
+    finally:
+        for k, v in saved.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+
+
 async def extra_politica_errores():
     print("\n=== Extra (spec 2e): 413 y 4xx de contrato ===")
     await fresh_db()
@@ -360,6 +383,7 @@ async def main() -> None:
         await escenario_5()
         await escenario_6()
         await escenario_7()
+        extra_alias_token()
         await extra_politica_errores()
     finally:
         settings.hub_sync_enabled, settings.mock_mode, settings.retention_days = saved
