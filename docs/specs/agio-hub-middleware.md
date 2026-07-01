@@ -139,6 +139,9 @@ Deliberadamente **fuera de fase 1**: `flow_aggregates` (alta cardinalidad, requi
 
 ### 2c. Contrato de API — lado Agio-Hub
 
+> 📄 Contrato detallado (schemas por entidad, idempotencia, volúmenes, preguntas abiertas) en
+> [agio-hub-ingest-contract.md](agio-hub-ingest-contract.md) — ese documento es el que se revisa con el equipo Agio-Hub.
+
 > ⚠️ **Este endpoint HOY NO EXISTE.** La skill `agio-hub-integration` es explícita: solo hay 7 endpoints verificados en el Hub (login, refresh, me, bootstrap, credentials, credentials/rotate, secrets), y ninguno es de ingestión de datos. Implementarlo es un **prerequisito de este spec** — un PR aparte en el repo `2026_Agio-Hub`, siguiendo el mismo patrón de auth que `/apps/config/bootstrap` (Bearer `app_token`, no JWT de usuario).
 
 ```
