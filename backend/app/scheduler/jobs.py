@@ -9,6 +9,8 @@ from ..cache import database as db
 from ..config import settings
 from ..alerts.evaluator import evaluate_once
 from ..devices.discovery import scan_once as devices_scan
+from ..hub import sync as hub_sync
+from ..hub.client import HubClient
 from ..mock.generator import mock_flow_rows, mock_lan_ports, mock_system, mock_wans
 from ..quality.prober import probe_all
 from ..services import hardware as hw_svc
@@ -89,6 +91,27 @@ async def _job_devices_scan() -> None:
         log.exception("Device scan failed: %s", e)
 
 
+async def _job_hub_sync() -> None:
+    try:
+        if settings.mock_mode:
+            return  # datos sintéticos nunca viajan al Hub (spec BDD, escenario MOCK_MODE)
+        async with HubClient(
+            settings.hub_url,
+            settings.hub_app_token,
+            timeout_s=settings.hub_sync_timeout_s,
+        ) as client:
+            pushed = await hub_sync.sync_once(
+                client,
+                batch_size=settings.hub_sync_batch_size,
+                max_backoff_s=settings.hub_sync_max_backoff_s,
+            )
+        total = sum(pushed.values())
+        if total:
+            log.info("Hub sync: %s rows pushed %s", total, pushed)
+    except Exception as e:
+        log.exception("Hub sync failed: %s", e)
+
+
 async def _job_hardware_poll() -> None:
     try:
         if settings.mock_mode:
@@ -139,6 +162,14 @@ def start_scheduler() -> AsyncIOScheduler:
         max_instances=1,
         coalesce=True,
     )
+    if settings.hub_sync_enabled:
+        sched.add_job(
+            _job_hub_sync,
+            IntervalTrigger(seconds=settings.hub_sync_interval_s),
+            id="hub_sync",
+            max_instances=1,
+            coalesce=True,
+        )
     if settings.device_scan_enabled:
         sched.add_job(
             _job_devices_scan,
