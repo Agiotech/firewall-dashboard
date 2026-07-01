@@ -142,7 +142,7 @@ Deliberadamente **fuera de fase 1**: `flow_aggregates` (alta cardinalidad, requi
 > 📄 Contrato detallado (schemas por entidad, idempotencia, volúmenes, preguntas abiertas) en
 > [agio-hub-ingest-contract.md](agio-hub-ingest-contract.md) — ese documento es el que se revisa con el equipo Agio-Hub.
 
-> ⚠️ **Este endpoint HOY NO EXISTE.** La skill `agio-hub-integration` es explícita: solo hay 7 endpoints verificados en el Hub (login, refresh, me, bootstrap, credentials, credentials/rotate, secrets), y ninguno es de ingestión de datos. Implementarlo es un **prerequisito de este spec** — un PR aparte en el repo `2026_Agio-Hub`, siguiendo el mismo patrón de auth que `/apps/config/bootstrap` (Bearer `app_token`, no JWT de usuario).
+> ✅ **Implementado en el Hub** — PR #204 de `agio-hub` (`feat/firewall-monitor-ingest`), pendiente de merge. Mismo patrón de auth que `/apps/config/bootstrap` (Bearer `app_token`, no JWT de usuario). Contrato final v0.2 (correcciones C1–C10 del equipo Hub) en [agio-hub-ingest-contract.md](agio-hub-ingest-contract.md). Verificado e2e en local contra la rama del PR.
 
 ```
 POST {HUB_URL}/integrations/firewall-monitor/metrics
@@ -162,12 +162,12 @@ Response 413: lote demasiado grande → reducir HUB_SYNC_BATCH_SIZE
 Response 5xx / timeout: error transitorio del Hub → backoff exponencial, no avanzar watermark
 ```
 
-Provisioning lado Hub (adaptado de `agio-hub-integration` §Paso 1, usando el slug `firewall_monitor` ya declarado en `.agents/AGENTS.md`):
+Provisioning lado Hub — como quedó implementado en PR #204 (detalle y correcciones en [agio-hub-ingest-contract.md](agio-hub-ingest-contract.md) §2):
 
-1. Agregar a `2026_Agio-Hub/api/domains/iam/catalog.py`: permiso `firewall_monitor.ingest` ("Recibir métricas del middleware de firewall"), asignado al rol `admin` y a un rol de servicio si el Hub distingue apps de usuarios.
-2. Implementar el router `integrations/firewall_monitor.py` en el Hub: valida `Bearer <app_token>` igual que `/apps/config/bootstrap`, valida el `entity` contra una lista blanca, inserta/reenvía las filas.
-3. Copiar `scripts/seed_odw_credentials.py` → `scripts/seed_firewall_monitor_credentials.py`: `audience=["firewall_monitor"]`, `credentials_to_seed=["firewall_monitor-batch"]`, sin `secrets_to_seed` propios (este middleware no necesita secrets del Hub, solo necesita emitir datos) salvo que a futuro el Hub le entregue `HUB_URL` vía bootstrap.
-4. Correr el seed → escribe `HUB_URL` + `APP_TOKEN_FIREWALL_MONITOR_BATCH` al `.env` de este repo (gitignored). Nunca se imprime el token a stdout.
+1. ~~Permiso `firewall_monitor.ingest`~~ — **no existe** (corrección C1): la ingesta se gatea por app token + audiencia; los app tokens no tienen contexto IAM. El único permiso IAM es `firewall_monitor.view` (lectura backoffice `/orm`).
+2. Router `api/domains/firewall_monitor/` montado en `/integrations/firewall-monitor`: valida `Bearer <app_token>` igual que `/apps/config/bootstrap`, lista blanca de entidades, upsert idempotente por llave natural.
+3. `scripts/seed_firewall_monitor_credentials.py`: crea/rota `firewall-monitor-batch` (guiones, corrección C4), sin secrets propios. ⚠️ Bug pendiente de fix en el PR #204: la ruta "create" no pasa `slug` a `create_credential()` (ver contrato §2).
+4. Correr el seed → escribe `HUB_URL` + `APP_TOKEN_FIREWALL_MONITOR_BATCH` al `.env` de este repo (gitignored; `config.py` acepta ese nombre vía alias). Nunca se imprime el token a stdout. **En prod `HUB_URL` lleva `/api`**: `https://app.agiotech.mx/api` (corrección C3).
 
 ### 2d. Variables de entorno nuevas
 
@@ -176,8 +176,8 @@ Siguiendo la regla de [CLAUDE.md](../../CLAUDE.md) §2: toda variable nueva va e
 | Variable | Tipo | Default | Sensible | Descripción |
 |---|---|---|---|---|
 | `HUB_SYNC_ENABLED` | bool | `false` | no | Activa la transmisión a Agio-Hub. En `false`, comportamiento actual sin cambios |
-| `HUB_URL` | str | — | no | Base URL de Agio-Hub (ej. `http://localhost:8000`) |
-| `HUB_APP_TOKEN` | str | — | **sí** | Token de aplicación (`audience=firewall_monitor`, surface `batch`), emitido por el seed script del Hub |
+| `HUB_URL` | str | — | no | Base URL de Agio-Hub. Dev: `http://localhost:8000`; **prod: `https://app.agiotech.mx/api`** (con `/api`, corrección C3). La escribe el seed del Hub |
+| `APP_TOKEN_FIREWALL_MONITOR_BATCH` | str | — | **sí** | Token de aplicación (`audience=firewall_monitor`, credencial `firewall-monitor-batch`); lo escribe el seed del Hub. `HUB_APP_TOKEN` se acepta como override manual (alias, gana si ambos existen) |
 | `HUB_SYNC_INTERVAL_S` | int | `60` | no | Frecuencia del job de sincronización |
 | `HUB_SYNC_BATCH_SIZE` | int | `500` | no | Máximo de filas por request |
 | `HUB_SYNC_TIMEOUT_S` | int | `10` | no | Timeout HTTP por request al Hub |
@@ -213,8 +213,8 @@ Sigue el patrón ya establecido en [CLAUDE.md](../../CLAUDE.md) §7 para el poll
 5. [x] `scheduler/jobs.py` — `_job_hub_sync`, registrado solo si `HUB_SYNC_ENABLED=true`. — PR #6
 6. [x] `cache/database.py` `purge_old()` — chequeo de "no purgar sin confirmar" + evento de advertencia (§2e). — PR #6
 7. [x] Registrar `HUB_*` en `.env.example`, `app/config.py`, [`docs/CONFIG.md`](../CONFIG.md). — absorbido en el inc 5 (PR #6), la regla de CLAUDE.md §2 no permite separarlos
-8. [ ] (Repo aparte, `2026_Agio-Hub`) permiso IAM + router de ingestión + seed script — ver §2c. **Bloqueado: requiere el repo del Hub.**
-9. [ ] Smoke test manual: bootstrap/token OK, push real de un lote, verificar en Hub. **Bloqueado por el inc 8.** La mitad local (cero regresión con `HUB_SYNC_ENABLED=false`) ya la cubre `backend/scripts/test_hub_sync.py`.
+8. [x] (Repo aparte, `2026_Agio-Hub`) router de ingestión + seed script — implementado por el equipo Hub en **PR #204** (`feat/firewall-monitor-ingest`), pendiente de merge. Sin permiso IAM de ingesta (corrección C1). ⚠️ Con un bug conocido en la ruta "create" del seed (falta `slug`; ver contrato §2).
+9. [x] Smoke test: **verificado e2e en local** contra la rama del PR #204 (Hub aislado en worktree + SQLite scratch): credencial provisionada, push 200, re-push idempotente (deduplicado por llave natural en `fw_*`), 401 con token inválido, y `sync_once` completo con watermarks avanzando. Herramienta permanente: `backend/scripts/smoke_hub.py` — **re-correrlo contra prod tras el merge + deploy** (runbook §5 del reporte del Hub).
 
 ---
 
@@ -223,8 +223,8 @@ Sigue el patrón ya establecido en [CLAUDE.md](../../CLAUDE.md) §7 para el poll
 - [x] Los 7 escenarios BDD de §Fase 1 tienen verificación manual o test con fixtures — `backend/scripts/test_hub_sync.py` (offline: SQLite temporal + `httpx.MockTransport`)
 - [x] `HUB_SYNC_ENABLED=false` reproduce el comportamiento actual sin cambios (cero regresión) — el job ni se registra; escenario 7 del test
 - [x] Todas las variables nuevas están en `.env.example`, `config.py` y `CONFIG.md`
-- [ ] El endpoint de ingestión existe en Agio-Hub (PR aparte) y su contrato coincide con §2c — **bloqueado (inc 8)**
-- [ ] El seed script rota/crea el `APP_TOKEN` y nunca lo imprime a stdout — **bloqueado (inc 8)**
+- [x] El endpoint de ingestión existe en Agio-Hub (PR #204, pendiente de merge) y su contrato coincide con §2c — coincidencia verificada e2e local (push, idempotencia, 401)
+- [ ] El seed script rota/crea el `APP_TOKEN` y nunca lo imprime a stdout — rota ✓ y no imprime ✓, pero la ruta **crea** tiene bug (falta `slug`) → fix de 1 línea pendiente en PR #204
 - [x] `purge_old()` no borra datos no sincronizados sin antes emitir un evento de advertencia
 - [x] No se hardcodea `HUB_URL` ni ningún token/secreto en código fuente
 - [x] Nuevo job documentado en [ARQUITECTURA.md](../ARQUITECTURA.md) §"APScheduler — jobs periódicos"
