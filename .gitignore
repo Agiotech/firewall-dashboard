@@ -8,3 +8,7 @@ frontend/dist/
 *.pyc
 .DS_Store
 *.log
+backend/dist/
+backend/build/
+backend/*.spec
+backend/entry_exe.py
