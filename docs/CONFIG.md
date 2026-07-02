@@ -154,8 +154,9 @@ Store-and-forward de métricas locales hacia el portal corporativo (spec [agio-h
 | Variable | Tipo | Default | Sensible | Descripción |
 |---|---|---|---|---|
 | `HUB_SYNC_ENABLED` | bool | `false` | no | Activa la transmisión a Agio-Hub |
-| `HUB_URL` | str | — | no | Base URL de Agio-Hub (ej. `http://localhost:8000`) |
-| `HUB_APP_TOKEN` | str | — | **sí** | Token de aplicación (`audience=firewall_monitor`), emitido por el seed script del Hub |
+| `HUB_URL` | str | — | no | Base URL de Agio-Hub. Dev: `http://localhost:8000`. **Prod: `https://app.agiotech.mx/api`** (lleva `/api`, contrato v0.2 C3). La escribe el seed del Hub |
+| `APP_TOKEN_FIREWALL_MONITOR_BATCH` | str | — | **sí** | Token de aplicación (`audience=firewall_monitor`, credencial `firewall-monitor-batch`). Lo escribe el seed script del Hub al `.env`; nunca se imprime ni comitea |
+| `HUB_APP_TOKEN` | str | — | **sí** | Alias manual del anterior; si ambos existen, este gana (override explícito) |
 | `HUB_SYNC_INTERVAL_S` | int | `60` | no | Frecuencia del job de sincronización |
 | `HUB_SYNC_BATCH_SIZE` | int | `500` | no | Máximo de filas por request |
 | `HUB_SYNC_TIMEOUT_S` | int | `10` | no | Timeout HTTP por request al Hub |

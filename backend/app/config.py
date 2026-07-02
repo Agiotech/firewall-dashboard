@@ -1,5 +1,6 @@
 import json
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -64,7 +65,12 @@ class Settings(BaseSettings):
     # Agio-Hub sync (store-and-forward, spec docs/specs/agio-hub-middleware.md)
     hub_sync_enabled: bool = False
     hub_url: str = ""
-    hub_app_token: str = ""
+    # el seed del Hub escribe APP_TOKEN_FIREWALL_MONITOR_BATCH al .env
+    # (contrato v0.2); HUB_APP_TOKEN queda como override explícito manual
+    hub_app_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("HUB_APP_TOKEN", "APP_TOKEN_FIREWALL_MONITOR_BATCH"),
+    )
     hub_sync_interval_s: int = 60
     hub_sync_batch_size: int = 500
     hub_sync_timeout_s: int = 10

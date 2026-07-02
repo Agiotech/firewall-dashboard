@@ -1,9 +1,10 @@
 # Contrato de ingestión — firewall-monitor → Agio-Hub
 
-> **Estado: BORRADOR v0.1 — para revisión del equipo Agio-Hub.**
+> **Estado: v0.2 — ACEPTADO E IMPLEMENTADO por el equipo Agio-Hub (PR #204 de `agio-hub`, pendiente de merge).**
 > Documento contractual entre el middleware `firewall-dashboard` (FWD-001) y el Agio-Hub.
 > Contexto general en [agio-hub-middleware.md](agio-hub-middleware.md); este documento detalla §2c de ese spec.
-> El endpoint descrito **no existe todavía** en el Hub — este contrato es el insumo para implementarlo (PR en `2026_Agio-Hub`).
+> v0.2 incorpora las correcciones C1–C10 del equipo Hub y sus respuestas a las preguntas §7.
+> **Verificado end-to-end en local** contra la rama del PR #204: `backend/scripts/smoke_hub.py` (push 200, re-push idempotente, 401 con token inválido) + `sync_once` real → filas deduplicadas en las tablas `fw_*` con watermarks avanzados.
 
 ---
 
@@ -25,13 +26,14 @@ Mismo patrón que `POST /apps/config/bootstrap` (skill `agio-hub-integration`):
 
 - Header `Authorization: Bearer <app_token>` — **app token**, no JWT de usuario. JWT de usuario debe rechazarse con `apps.invalid_token`.
 - `audience = ["firewall_monitor"]`.
-- Credencial inicial: `firewall_monitor-batch` (una por superficie; futuras instalaciones = credenciales nuevas, mismo audience).
+- Credencial inicial: `firewall-monitor-batch` (corrección C4: guiones; una por instalación — futuras instalaciones = credenciales nuevas, mismo audience).
 
-Provisioning requerido en el Hub (una vez):
+Provisioning en el Hub (implementado en PR #204):
 
-1. `api/domains/iam/catalog.py`: permiso `firewall_monitor.ingest` ("Recibir métricas del middleware de firewall") + `firewall_monitor.view` para el portal. `ROLE_MATRIX[ROLE_ADMIN]` recibe ambos.
-2. `scripts/seed_firewall_monitor_credentials.py` (copiar de `seed_odw_credentials.py`): crea/rota `firewall_monitor-batch` y escribe `HUB_URL` + `APP_TOKEN_FIREWALL_MONITOR_BATCH` al `.env` del repo del middleware. Nunca imprime tokens a stdout.
-3. Router nuevo `integrations/firewall_monitor.py` implementando §3.
+1. **No existe permiso IAM de ingesta** (corrección C1): la ingesta se gatea solo por app token + audiencia — los app tokens no tienen contexto IAM. El único permiso IAM es `firewall_monitor.view` (lectura backoffice `/orm`, rol admin), sembrado code-first al arrancar el Hub.
+2. `scripts/seed_firewall_monitor_credentials.py`: crea/rota `firewall-monitor-batch` (audiencia `["firewall_monitor"]`) y escribe `HUB_URL` + `APP_TOKEN_FIREWALL_MONITOR_BATCH` al `.env` del repo del middleware (`FIREWALL_MONITOR_REPO_PATH`). Nunca imprime tokens a stdout. El middleware lee ese nombre de variable tal cual (alias en `config.py`; `HUB_APP_TOKEN` queda como override manual).
+   ⚠️ **Bug detectado en la rama del PR #204** (hallado en el e2e local): la ruta "create" del seed llama `AppsService.create_credential()` sin el argumento keyword-only `slug` → `TypeError` en la primera corrida sobre una DB donde la credencial aún no existe (p. ej. el VPS en el deploy). La ruta "rotate" sí funciona. Fix de una línea: `slug=cred_name`. `seed_odw_credentials.py` arrastra el mismo problema latente.
+3. Router `api/domains/firewall_monitor/router.py` montado en `/integrations/firewall-monitor` (primer namespace `/integrations/*` del Hub).
 
 ---
 
@@ -42,6 +44,10 @@ POST /integrations/firewall-monitor/metrics
 Authorization: Bearer <APP_TOKEN_FIREWALL_MONITOR_BATCH>
 Content-Type: application/json
 ```
+
+> **URL en producción** (corrección C3): el Hub vive detrás de `/api` —
+> `https://app.agiotech.mx/api/integrations/firewall-monitor/metrics`.
+> El `HUB_URL` del middleware en prod DEBE ser `https://app.agiotech.mx/api`.
 
 ### Request
 
@@ -65,9 +71,10 @@ Content-Type: application/json
 | Código | Body | Semántica para el Hub | Reacción del middleware (ya implementada) |
 |---|---|---|---|
 | `200` | `{"accepted": <int>}` | Lote persistido (o deduplicado) por completo. `accepted` = filas procesadas, informativo | Avanza el cursor; siguiente lote |
-| `401` / `403` | `{"detail": "apps.invalid_token"}` | Token inválido, revocado o JWT de usuario | Detiene el ciclo, evento `error` local, requiere renovación manual del token; no reintenta en loop |
-| `413` | — | Lote excede el tope del Hub | Parte el lote a la mitad ese ciclo |
-| `422` | `{"detail": "<motivo>"}` | `entity` fuera de lista blanca o filas con schema inválido | No reintentable: evento `error` local, cursor no avanza |
+| `401` | `{"detail": "apps.invalid_token"}` | Token ausente, inválido, revocado o JWT de usuario (corrección C2) | Detiene el ciclo, evento `error` local, requiere renovación manual del token; no reintenta en loop |
+| `403` | `{"detail": "apps.invalid_token"}` | Token válido pero de otra audiencia (corrección C2; mismo `detail`) | Idéntica al 401 (el middleware trata ambos igual) |
+| `413` | `{"detail": "firewall_monitor.batch_too_large"}` | Lote excede `FIREWALL_MONITOR_MAX_BATCH_ROWS` (500) | Parte el lote a la mitad ese ciclo |
+| `422` | `{"detail": "firewall_monitor.<motivo>"}` (corrección C8) | `entity` fuera de lista blanca o filas con schema inválido | No reintentable: evento `error` local, cursor no avanza |
 | `5xx` | — | Error interno / mantenimiento | Backoff exponencial (tope 15 min), cursor no avanza, datos siguen en SQLite |
 
 **Regla crítica**: el Hub **no debe responder 200 parcial**. Si alguna fila del lote no puede persistirse, responder 422/500 con el lote completo rechazado — el middleware reintentará el lote entero. (Simplifica la semántica del cursor; el volumen es bajo.)
@@ -76,7 +83,15 @@ Content-Type: application/json
 
 ## 4. Entidades (lista blanca)
 
-Seis entidades en fase 1. El schema de cada fila replica la tabla SQLite del middleware.
+Seis entidades en fase 1 → tablas espejo `fw_*` en el Hub (retención 90 días vía `FIREWALL_MONITOR_RETENTION_DAYS`; las series se purgan, `fw_vpn_tunnels` no). El schema de cada fila replica la tabla SQLite del middleware.
+
+Precisiones v0.2 (todas retro-compatibles, sin cambio de payload):
+
+- **C5**: el `id` del payload se guarda como `source_id` en el Hub (mapeo interno).
+- **C6**: las métricas numéricas son *nullable* — un null de SNMP no envenena el lote (evita cursor atascado).
+- **C7**: *tolerant reader* — el Hub ignora campos extra; el middleware puede evolucionar sin coordinar deploy.
+- **C9**: `ts` es INTEGER 32-bit; deuda 2038 documentada lado Hub.
+- **C10**: el `last_used_at` de la credencial funge como latido de la instalación (ops detecta middleware caído).
 
 ### 4.1 `wan_metrics` — tráfico y estado por WAN (1 fila por WAN cada 30s)
 
@@ -173,13 +188,13 @@ Seis entidades en fase 1. El schema de cada fila replica la tabla SQLite del mid
 
 Ciclo de sync: cada 60s (`HUB_SYNC_INTERVAL_S`), lotes de ≤500. Régimen normal: ~6 requests/min pico, órdenes de magnitud bajo cualquier límite razonable.
 
-## 7. Preguntas abiertas para el equipo Agio-Hub
+## 7. Preguntas — respondidas por el equipo Hub (v0.2)
 
-1. **Ruta**: ¿`/integrations/firewall-monitor/metrics` encaja con el routing actual del Hub, o prefieren otro prefijo (p.ej. `/ingest/...`)?
-2. **Persistencia lado Hub**: ¿tablas espejo por entidad o un event store genérico? (El contrato no lo restringe; solo pide idempotencia.)
-3. **Retención lado Hub**: el middleware retiene 30 días raw localmente; ¿el Hub define su propia política o quiere negociar rangos?
-4. **Rate limit / tope de lote**: ¿413 con qué tope? El middleware ya sabe partir lotes.
-5. **Multi-instalación futura**: ¿confirman que credencial-por-instalación es el mecanismo de identidad de origen, o prefieren un campo explícito `installation_id` en el payload?
+1. **Ruta**: confirmada `/integrations/firewall-monitor/metrics` (estrena el namespace `/integrations/*`).
+2. **Persistencia lado Hub**: tablas espejo por entidad (`fw_*`).
+3. **Retención lado Hub**: 90 días (`FIREWALL_MONITOR_RETENTION_DAYS`; `0` = sin purga). Series de tiempo se purgan; `fw_vpn_tunnels` no.
+4. **Tope de lote**: 500 filas (`FIREWALL_MONITOR_MAX_BATCH_ROWS`) → 413 si se excede.
+5. **Multi-instalación**: credencial-por-instalación confirmada; sin `installation_id` en el payload. Alta futura: `FIREWALL_MONITOR_CREDENTIAL_NAME=firewall-monitor-batch-<sitio>` + re-correr el seed.
 
 ---
 
@@ -201,4 +216,4 @@ curl -X POST "$HUB_URL/integrations/firewall-monitor/metrics" \
 
 ---
 
-_v0.1 borrador — 2026-07-01 — FWD-001 · pendiente de revisión por equipo Agio-Hub_
+_v0.2 — 2026-07-01 — FWD-001 · aceptado e implementado por equipo Agio-Hub (PR #204, pendiente de merge) · verificado e2e local contra la rama del PR_
